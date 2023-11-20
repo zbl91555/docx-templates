@@ -161,6 +161,9 @@ export type Context = {
   pendingHtmlNode?: TextNode | NonTextNode;
   htmlId: number;
   htmls: Htmls;
+  pendingEmbedNode?: NonTextNode;
+  embedId: number;
+  embeds: Embeds;
   vars: { [name: string]: VarValue };
   loops: Array<LoopStatus>;
   fJump: boolean;
@@ -183,9 +186,20 @@ export type Image = {
   extension: ImageExtension;
   data: Buffer | ArrayBuffer | string;
 };
+
+export const EmbedExtensions = ['.xlsx'] as const;
+type EmbedExtension = (typeof EmbedExtensions)[number];
+export type Embed = {
+  shapeImageExtension: ImageExtension;
+  shapeImageData: ArrayBuffer | string;
+  extension: EmbedExtension;
+  data: Buffer | ArrayBuffer | string;
+};
+
 export type Links = { [id: string]: Link };
 type Link = { url: string };
 export type Htmls = { [id: string]: string };
+export type Embeds = { [id: string]: Embed };
 
 type BufferStatus = {
   text: string;
@@ -250,6 +264,13 @@ export type LinkPars = {
   label?: string;
 };
 
+export type EmbedPars = {
+  shapeImageExtension: ImageExtension;
+  shapeImageData: ArrayBuffer | string;
+  data: ArrayBuffer | string;
+  extension: EmbedExtension;
+};
+
 export type CommandSummary = {
   raw: string;
   type: BuiltInCommand;
@@ -271,4 +292,11 @@ export const BUILT_IN_COMMANDS = [
   'IMAGE',
   'LINK',
   'HTML',
+  'EMBED',
 ] as const;
+
+export const EmbedObjectInfos = {
+  '.xlsx': {
+    ProgID: 'Excel.Sheet.12',
+  },
+};

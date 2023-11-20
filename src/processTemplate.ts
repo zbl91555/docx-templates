@@ -17,12 +17,17 @@ import {
   ImagePars,
   Images,
   LinkPars,
+  EmbedPars,
   Links,
   Htmls,
+  Embeds,
+  Embed,
   Image,
   BUILT_IN_COMMANDS,
   ImageExtensions,
+  EmbedExtensions,
   NonTextNode,
+  EmbedObjectInfos,
 } from './types';
 import {
   CommandSyntaxError,
@@ -56,6 +61,8 @@ export function newContext(
     links: {},
     htmlId: 0,
     htmls: {},
+    embedId: 0,
+    embeds: {},
     vars: {},
     loops: [],
     fJump: false,
@@ -116,6 +123,7 @@ type ReportOutput =
       images: Images;
       links: Links;
       htmls: Htmls;
+      embeds: Embeds;
     }
   | {
       status: 'errors';
@@ -338,6 +346,24 @@ export async function walkTemplate(
         delete ctx.pendingHtmlNode;
       }
 
+      if (
+        ctx.pendingEmbedNode &&
+        !nodeOut._fTextNode &&
+        nodeOut._tag === 'w:p'
+      ) {
+        const embedNode = ctx.pendingEmbedNode;
+        const parent = nodeOut._parent;
+        if (parent) {
+          embedNode._parent = parent;
+          parent._children.pop();
+          parent._children.push(embedNode);
+          // Prevent containing paragraph or table row from being removed
+          ctx.buffers['w:p'].fInsertedText = true;
+          ctx.buffers['w:tr'].fInsertedText = true;
+        }
+        delete ctx.pendingEmbedNode;
+      }
+
       // `w:tc` nodes shouldn't be left with no `w:p` or 'w:altChunk' children; if that's the
       // case, add an empty `w:p` inside
       if (
@@ -468,6 +494,7 @@ export async function walkTemplate(
     images: ctx.images,
     links: ctx.links,
     htmls: ctx.htmls,
+    embeds: ctx.embeds,
   };
 }
 
@@ -655,9 +682,18 @@ const processCmd: CommandProcessor = async (
         );
         if (html != null) await processHtml(ctx, html);
       }
-
-      // Invalid command
-    } else throw new CommandSyntaxError(cmd);
+    } else if (cmdName === 'EMBED') {
+      if (!isLoopExploring(ctx)) {
+        const embed: EmbedPars | undefined = await runUserJsAndGetRaw(
+          data,
+          cmdRest,
+          ctx
+        );
+        if (embed != null) await processEmbed(ctx, embed);
+      }
+    }
+    // Invalid command
+    else throw new CommandSyntaxError(cmd);
     return;
   } catch (err) {
     if (!(err instanceof Error)) throw err;
@@ -873,6 +909,44 @@ function validateImagePars(pars: ImagePars) {
   if (pars.thumbnail) validateImage(pars.thumbnail);
 }
 
+function validateEmbedPars(pars: EmbedPars) {
+  if (
+    !(
+      pars.data instanceof Buffer ||
+      pars.data instanceof ArrayBuffer ||
+      typeof pars.data === 'string'
+    )
+  ) {
+    throw new Error(
+      'embed .data property needs to be provided as Buffer, ArrayBuffer, or as a base64-encoded string'
+    );
+  }
+
+  if (!EmbedExtensions.includes(pars.extension)) {
+    throw new Error(
+      `An extension (one of ${EmbedExtensions}) needs to be provided when providing an embed object.`
+    );
+  }
+
+  if (
+    !(
+      pars.shapeImageData instanceof Buffer ||
+      pars.shapeImageData instanceof ArrayBuffer ||
+      typeof pars.shapeImageData === 'string'
+    )
+  ) {
+    throw new Error(
+      'embed .data property needs to be provided as Buffer, ArrayBuffer, or as a base64-encoded string'
+    );
+  }
+
+  if (!ImageExtensions.includes(pars.shapeImageExtension)) {
+    throw new Error(
+      `An extension (one of ${ImageExtensions}) needs to be provided when providing an embed object.`
+    );
+  }
+}
+
 const processImage = (ctx: Context, imagePars: ImagePars) => {
   validateImagePars(imagePars);
   const cx = (imagePars.width * 360e3).toFixed(0);
@@ -1018,6 +1092,53 @@ const processHtml = async (ctx: Context, data: string) => {
   const node = newNonTextNode;
   const html = node('w:altChunk', { 'r:id': relId });
   ctx.pendingHtmlNode = html;
+};
+
+const processEmbed = async (ctx: Context, embedPars: EmbedPars) => {
+  validateEmbedPars(embedPars);
+  const extension = embedPars.extension;
+  ctx.embedId += 1;
+  const id = String(ctx.embedId);
+  const relId = `embed${id}`;
+  const relShapeId = `shape${relId}`;
+  ctx.embeds[relId] = embedPars;
+  const embedObjectInfo = EmbedObjectInfos[extension];
+  const node = newNonTextNode;
+  const embedNode = node('w:object', {}, [
+    node(
+      'v:shape',
+      {
+        id: relShapeId,
+        'o:spt': '75',
+        type: '#_x0000_t75',
+        style: 'height:65.35pt;width:72.55pt',
+        'o:ole': 't',
+        filled: 'f',
+        stroked: 'f',
+        coordsize: '21600,21600',
+        'o:preferrelative': 't',
+      },
+      [
+        // node('o:lock', {
+        //   'v:ext': 'edit',
+        //   aspectratio: 't',
+        // }),
+        node('v:imagedata', {
+          'r:id': relShapeId,
+          'o:title': 't',
+        }),
+      ]
+    ),
+    node('o:OLEObject', {
+      Type: 'Embed',
+      ProgID: embedObjectInfo.ProgID,
+      ObjectID: relId,
+      ShapeID: relShapeId,
+      DrawAspect: 'Icon',
+      'r:id': relId,
+    }),
+  ]);
+  ctx.pendingEmbedNode = node('w:p', {}, [node('w:r', {}, [embedNode])]);
 };
 
 // ==========================================

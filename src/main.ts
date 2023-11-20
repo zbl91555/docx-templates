@@ -27,6 +27,7 @@ import {
   NonTextNode,
   CommandSummary,
   BuiltInCommand,
+  Embeds,
 } from './types';
 import { addChild, newNonTextNode } from './reportUtils';
 import JSZip from 'jszip';
@@ -216,6 +217,7 @@ async function createReport(
     images: images1,
     links: links1,
     htmls: htmls1,
+    embeds: embeds1,
   } = result;
   if (_probe === 'JS') return report1;
 
@@ -227,9 +229,11 @@ async function createReport(
 
   let numImages = Object.keys(images1).length;
   let numHtmls = Object.keys(htmls1).length;
+  let numEmbeds = Object.keys(embeds1).length;
   await processImages(images1, mainDocument, zip);
   await processLinks(links1, mainDocument, zip);
   await processHtmls(htmls1, mainDocument, zip);
+  await processEmbeds(embeds1, mainDocument, zip);
 
   for (const [js, filePath] of prepped_secondaries) {
     // Grab the last used (highest) image id from the main document's context, but create
@@ -244,22 +248,25 @@ async function createReport(
       images: images2,
       links: links2,
       htmls: htmls2,
+      embeds: embeds2,
     } = result;
     const xml = buildXml(report2, xmlOptions);
     zipSetText(zip, filePath, xml);
 
     numImages += Object.keys(images2).length;
     numHtmls += Object.keys(htmls2).length;
+    numEmbeds += Object.keys(embeds2).length;
 
     const segments = filePath.split('/');
     const documentComponent = segments[segments.length - 1];
     await processImages(images2, documentComponent, zip);
     await processLinks(links2, mainDocument, zip);
     await processHtmls(htmls2, mainDocument, zip);
+    await processEmbeds(embeds2, mainDocument, zip);
   }
 
   // Process [Content_Types].xml
-  if (numImages || numHtmls) {
+  if (numImages || numHtmls || numEmbeds) {
     logger.debug('Completing [Content_Types].xml...');
 
     logger.debug('Content types', { attach: contentTypes });
@@ -291,6 +298,11 @@ async function createReport(
     if (numHtmls) {
       logger.debug('Completing [Content_Types].xml for HTML...');
       ensureContentType('html', 'text/html');
+    }
+    if (numEmbeds) {
+      logger.debug('Completing [Content_Types].xml for HTML...');
+      // TODO:
+      // ensureContentType('html', 'text/html');
     }
     const finalContentTypesXml = buildXml(contentTypes, xmlOptions);
     zipSetText(zip, CONTENT_TYPES_PATH, finalContentTypesXml);
@@ -556,6 +568,78 @@ const processHtmls = async (
           Id: htmlId,
           Type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk',
           Target: `${htmlName}`,
+        })
+      );
+    }
+    const finalRelsXml = buildXml(rels, {
+      literalXmlDelimiter: DEFAULT_LITERAL_XML_DELIMITER,
+    });
+    zipSetText(zip, relsPath, finalRelsXml);
+  }
+};
+
+const processEmbeds = async (
+  embeds: Embeds,
+  documentComponent: string,
+  zip: JSZip
+) => {
+  logger.debug(`Processing htmls for ${documentComponent}...`);
+  const embedIds = Object.keys(embeds);
+  if (embedIds.length) {
+    // Process rels
+    logger.debug(`Completing document.xml.rels...`);
+    const relsPath = `${TEMPLATE_PATH}/_rels/${documentComponent}.rels`;
+    const rels = await getRelsFromZip(zip, relsPath);
+    for (const embedId of embedIds) {
+      const {
+        shapeImageData,
+        shapeImageExtension,
+        data: embedData,
+        extension,
+      } = embeds[embedId];
+
+      const shapeImageId = `shape${embedId}`;
+
+      const [embedName, shapeImageName] = [
+        `embed${extension.replace(/\./g, '_')}_${embedId}${extension}`,
+        `image${shapeImageExtension.replace(
+          /\./g,
+          '_'
+        )}_${shapeImageId}${shapeImageExtension}`,
+      ];
+
+      const [embedPath, shapeImagePath] = [
+        `${TEMPLATE_PATH}/media/${embedName}`,
+        `${TEMPLATE_PATH}/media/${shapeImageName}`,
+      ];
+
+      if (typeof shapeImageData === 'string') {
+        zipSetBase64(zip, shapeImagePath, shapeImageData);
+      } else {
+        zipSetBinary(zip, shapeImagePath, shapeImageData);
+      }
+
+      if (typeof embedData === 'string') {
+        zipSetBase64(zip, embedPath, embedData);
+      } else {
+        zipSetBinary(zip, embedPath, embedData);
+      }
+
+      addChild(
+        rels,
+        newNonTextNode('Relationship', {
+          Id: embedId,
+          Type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject',
+          Target: `media/${embedName}`,
+        })
+      );
+
+      addChild(
+        rels,
+        newNonTextNode('Relationship', {
+          Id: shapeImageId,
+          Type: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image',
+          Target: `media/${shapeImageName}`,
         })
       );
     }

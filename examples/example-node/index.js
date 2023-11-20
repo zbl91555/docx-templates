@@ -1,23 +1,14 @@
 require('isomorphic-fetch');
 const qrcode = require('yaqrcode');
 const createReport = require('docx-templates').default;
-const fs = require('fs')
+const fs = require('fs');
+const path = require('path');
 
-const template = fs.readFileSync(process.argv[2])
+const template = fs.readFileSync(process.argv[2]);
 
 createReport({
   template,
-  data: query =>
-    fetch('https://swapi-graphql.netlify.app/.netlify/functions/index', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query }),
-    })
-      .then(res => res.json())
-      .then(res => res.data),
+  data: {},
   additionalJsContext: {
     tile: async (z, x, y, size = 3) => {
       const resp = await fetch(
@@ -31,12 +22,25 @@ createReport({
     qr: contents => {
       const dataUrl = qrcode(contents, { size: 500 });
       const data = dataUrl.slice('data:image/gif;base64,'.length);
-      return { width: 6, height: 6, data, extension: '.gif', caption: 'QR Code caption' };
+      return {
+        width: 6,
+        height: 6,
+        data,
+        extension: '.gif',
+        caption: 'QR Code caption',
+      };
+    },
+    insertExcel: fileName => {
+      return {
+        data: fs.readFileSync(path.join(__dirname, fileName)),
+        extension: '.xlsx',
+        shapeImageData: fs.readFileSync(path.join(__dirname, 'sample.png')),
+        shapeImageExtension: '.png',
+      };
     },
   },
-}).then(
-  rendered => fs.writeFileSync(
-    process.argv.length > 3 ? process.argv[3] : null,
-    rendered
-  ))
+})
+  .then(rendered =>
+    fs.writeFileSync(process.argv.length > 3 ? process.argv[3] : null, rendered)
+  )
   .catch(console.log);
